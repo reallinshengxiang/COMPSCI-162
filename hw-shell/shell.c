@@ -27,14 +27,25 @@ int shell_terminal;
 struct termios shell_tmodes;
 pid_t shell_pgid;
 
-pid_t background_pids[1024];
-int num_background_pids = 0;
+struct process {
+  pid_t pid;
+  struct termios tmodes;
+  int is_stopped;  
+  int is_background; 
+};
+
+struct process processes[1024];  
+struct tokens *bg_tokens;
+int num_bg_tokens=0,start_bg_token=0;
+int num_processes = 0; 
 
 int cmd_exit(struct tokens* tokens);
 int cmd_help(struct tokens* tokens);
 int cmd_pwd(struct tokens* tokens);
 int cmd_cd(struct tokens* tokens);
 int cmd_wait(struct tokens* tokens); 
+int cmd_fg(struct tokens* tokens);
+int cmd_bg(struct tokens* tokens);
 
 typedef int cmd_fun_t(struct tokens* tokens);
 
@@ -49,7 +60,9 @@ fun_desc_t cmd_table[] = {
     {cmd_exit, "exit", "exit the command shell"},
     {cmd_pwd, "pwd", "print current working directory"},
     {cmd_cd, "cd", "change directory"},
-    {cmd_wait, "wait", "wait for all background jobs to finish"}  // 新增命令描述
+    {cmd_wait, "wait", "wait for all background jobs to finish"},
+    {cmd_fg, "fg", "bring job to the foreground"},
+    {cmd_bg, "bg", "resume a job in the background"}
 };
 
 int cmd_help(unused struct tokens* tokens) {
@@ -85,11 +98,63 @@ int cmd_cd(struct tokens* tokens) {
   }
   return 1;
 }
+
 int cmd_wait(unused struct tokens* tokens) {
-  for (int i = 0; i < num_background_pids; i++) {
-    waitpid(background_pids[i], NULL, 0);
+  for (int i = 0; i < num_processes; i++) {
+    if (processes[i].is_background) {
+      waitpid(processes[i].pid, NULL, 0);
+    }
   }
-  //printf("Done waiting\n");
+  return 1;
+}
+
+int cmd_fg(struct tokens* tokens) {
+  pid_t pid = -1;
+  if (tokens_get_length(tokens) > 1) {
+    pid = atoi(tokens_get_token(tokens, 1));
+  } else {
+    for (int i = num_processes - 1; i >= 0; i--) {
+      if (processes[i].is_background && processes[i].is_stopped == 0) {
+        pid = processes[i].pid;
+        break;
+      }
+    }
+  }
+
+  if (pid == -1) {
+    fprintf(stderr, "fg: no such job\n");
+    return 1;
+  }
+
+  tcsetpgrp(shell_terminal, pid);
+  kill(pid, SIGCONT);
+  int status;
+  waitpid(pid, &status, WUNTRACED);
+  tcsetpgrp(shell_terminal, shell_pgid);
+
+  return 1;
+}
+
+int cmd_bg(struct tokens* tokens) {
+  pid_t pid = -1;
+  if (tokens_get_length(tokens) > 1) {
+    pid = atoi(tokens_get_token(tokens, 1));
+  } else {
+    for (int i = num_processes - 1; i >= 0; i--) {
+      if (processes[i].is_background && processes[i].is_stopped == 1) {
+        pid = processes[i].pid;
+        break;
+      }
+    }
+  }
+
+  if (pid == -1) {
+    fprintf(stderr, "bg: no such job\n");
+    return 1;
+  }
+
+  kill(pid, SIGCONT);
+
   return 1;
 }
 
@@ -114,188 +179,190 @@ void init_shell() {
 }
 
 char* search_in_path(const char* program_name) {
-    char* path = getenv("PATH");
-    if (!path) return NULL;
-    char* path_dup = strdup(path);
-    char* save_ptr;
-    char* directory = strtok_r(path_dup, ":", &save_ptr);
-    while (directory != NULL) {
-        char full_path[1024];
-        snprintf(full_path, sizeof(full_path), "%s/%s", directory, program_name);
-        if (access(full_path, X_OK) == 0) {
-            free(path_dup); 
-            return strdup(full_path); 
-        }
-        directory = strtok_r(NULL, ":", &save_ptr);
+  char* path = getenv("PATH");
+  if (!path) return NULL;
+  char* path_dup = strdup(path);
+  char* save_ptr;
+  char* directory = strtok_r(path_dup, ":", &save_ptr);
+  while (directory != NULL) {
+    char full_path[1024];
+    snprintf(full_path, sizeof(full_path), "%s/%s", directory, program_name);
+    if (access(full_path, X_OK) == 0) {
+      free(path_dup); 
+      return strdup(full_path); 
     }
-    free(path_dup);
-    return NULL;
+    directory = strtok_r(NULL, ":", &save_ptr);
+  }
+  free(path_dup);
+  return NULL;
 }
 
 void run_command_with_pipes(struct tokens* tokens, bool background) {
-    int num_commands = 0;
-    int token_length = tokens_get_length(tokens);
-    for (int i = 0; i < token_length; i++) {
-        if (strcmp(tokens_get_token(tokens, i), "|") == 0) {
-            num_commands++;
-        }
+  int num_commands = 0;
+  int token_length = tokens_get_length(tokens);
+  for (int i = 0; i < token_length; i++) {
+    if (strcmp(tokens_get_token(tokens, i), "|") == 0) {
+      num_commands++;
     }
-    num_commands++;
-    int pipe_arr[num_commands - 1][2];  
-    for (int i = 0; i < num_commands - 1; i++) {
-        if (pipe(pipe_arr[i]) == -1) {
-            perror("pipe");
-            exit(EXIT_FAILURE);
-        }
+  }
+  num_commands++;
+  //printf("%d  %d\n",token_length,num_commands);
+  int pipe_arr[num_commands - 1][2];  
+  for (int i = 0; i < num_commands - 1; i++) {
+    if (pipe(pipe_arr[i]) == -1) {
+      perror("pipe");
+      exit(EXIT_FAILURE);
     }
-    int command_index = 0;
-    for (int i = 0; i < num_commands; i++) {
-        int start = command_index;
-        int input_redirect = -2;
-        int output_redirect = -2;
-        char* input_file = NULL;
-        char* output_file = NULL;
-        while (command_index < token_length && strcmp(tokens_get_token(tokens, command_index), "|") != 0) {
-            if (strcmp(tokens_get_token(tokens, command_index), "<") == 0) {
-                input_redirect = command_index;
-                input_file = tokens_get_token(tokens, command_index + 1);
-            } else if (strcmp(tokens_get_token(tokens, command_index), ">") == 0) {
-                output_redirect = command_index;
-                output_file = tokens_get_token(tokens, command_index + 1);
-            }
-            command_index++;
-        }
-        int arg_count = 0;
-        char* args[command_index - start + 1];
-        for (int j = start; j < command_index; j++) {
-            if (j == input_redirect || j == input_redirect + 1 || j == output_redirect || j == output_redirect + 1) {
-                continue;
-            }
-            args[arg_count++] = tokens_get_token(tokens, j);
-        }
-        args[arg_count] = NULL;
-        pid_t pid = fork();
-        if (pid == 0) {
-          signal(SIGINT, SIG_DFL);
-          signal(SIGQUIT, SIG_DFL);
-          signal(SIGTERM, SIG_DFL);
-          signal(SIGSTOP, SIG_DFL);
-          signal(SIGCONT, SIG_DFL);
-          signal(SIGTTIN, SIG_DFL);
-          signal(SIGTTOU, SIG_DFL);
-            if (i > 0) {
-                dup2(pipe_arr[i - 1][0], STDIN_FILENO);
-            }
-            if (i < num_commands - 1) {
-                dup2(pipe_arr[i][1], STDOUT_FILENO);
-            }
-            if (input_file && i == 0) {
-                int fd = open(input_file, O_RDONLY);
-                if (fd < 0) {
-                    perror("open");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDIN_FILENO); 
-                close(fd);
-            }
-            if (output_file && i == num_commands - 1) {
-                int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd < 0) {
-                    perror("open");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDOUT_FILENO); 
-                close(fd);
-            }
-            for (int j = 0; j < num_commands - 1; j++) {
-                close(pipe_arr[j][0]);
-                close(pipe_arr[j][1]);
-            }
-            char* program = args[0];
-            if (strchr(program, '/') == NULL) {
-                char* full_path = search_in_path(program);
-                if (full_path != NULL) {
-                    execv(full_path, args);
-                    free(full_path);
-                }
-            } else {
-                execv(program, args);
-            }
-            perror("execv");
-            exit(EXIT_FAILURE);
-        }
-
-        if (background) {
-            background_pids[num_background_pids++] = pid;
-        }
-
-        command_index++; 
+  }
+  int command_index = 0;
+  for (int i = 0; i < num_commands; i++) {
+    int start = command_index;
+    int input_redirect = -2;
+    int output_redirect = -2;
+    char* input_file = NULL;
+    char* output_file = NULL;
+    while (command_index < token_length && strcmp(tokens_get_token(tokens, command_index), "|") != 0) {
+      if (strcmp(tokens_get_token(tokens, command_index), "<") == 0) {
+        input_redirect = command_index;
+        input_file = tokens_get_token(tokens, command_index + 1);
+      } else if (strcmp(tokens_get_token(tokens, command_index), ">") == 0) {
+        output_redirect = command_index;
+        output_file = tokens_get_token(tokens, command_index + 1);
+      }
+      command_index++;
     }
-    for (int i = 0; i < num_commands - 1; i++) {
-        close(pipe_arr[i][0]);
+    int arg_count = 0;
+    char* args[command_index - start + 1];
+    for (int j = start; j < command_index; j++) {
+      if (j == input_redirect || j == input_redirect + 1 || j == output_redirect || j == output_redirect + 1) {
+        continue;
+      }
+      args[arg_count++] = tokens_get_token(tokens, j);
+    }
+    args[arg_count] = NULL;
+    pid_t pid = fork();
+    if (pid == 0) {
+      signal(SIGINT, SIG_DFL);
+      signal(SIGQUIT, SIG_DFL);
+      signal(SIGTERM, SIG_DFL);
+      signal(SIGSTOP, SIG_DFL);
+      signal(SIGCONT, SIG_DFL);
+      signal(SIGTTIN, SIG_DFL);
+      signal(SIGTTOU, SIG_DFL);
+      if (i > 0) {
+        dup2(pipe_arr[i - 1][0], STDIN_FILENO);
+      }
+      if (i < num_commands - 1) {
+        dup2(pipe_arr[i][1], STDOUT_FILENO);
+      }
+      if (input_file && i == 0) {
+        int fd = open(input_file, O_RDONLY);
+        if (fd < 0) {
+          perror("open input");
+          exit(EXIT_FAILURE);
+        }
+        dup2(fd, STDIN_FILENO);
+        close(fd);
+      }
+      if (output_file && i == num_commands - 1) {
+        int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (fd < 0) {
+          perror("open output");
+          exit(EXIT_FAILURE);
+        }
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+      }
+      for (int j = 0; j < num_commands - 1; j++) {
+        close(pipe_arr[j][0]);
+        close(pipe_arr[j][1]);
+      }
+      char* path = search_in_path(args[0]);
+      if (path) {
+        execv(path, args);
+      } else {
+        execv(args[0], args);
+      }
+      perror("execv");
+      exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+      perror("fork");
+    } else {
+      if (i > 0) {
+        close(pipe_arr[i - 1][0]);
+      }
+      if (i < num_commands - 1) {
         close(pipe_arr[i][1]);
-    }
-    if (!background) {
-        for (int i = 0; i < num_commands; i++) {
-            wait(NULL);
+      }
+      if (!background) {
+        int status;
+        waitpid(pid, &status, WUNTRACED);
+        if (WIFSTOPPED(status)) {
+          processes[num_processes].pid = pid;
+          processes[num_processes].is_background = 0;
+          processes[num_processes].is_stopped = 1;
+          tcgetattr(shell_terminal, &processes[num_processes].tmodes);
+          num_processes++;
         }
+      } else {
+        processes[num_processes].pid = pid;
+        processes[num_processes].is_background = 1;
+        processes[num_processes].is_stopped = 0;
+        tcgetattr(shell_terminal, &processes[num_processes].tmodes);
+        num_processes++;
+      }
     }
+    command_index++;
+  }
 }
 
 int main(unused int argc, unused char* argv[]) {
   init_shell();
   signal(SIGINT,  SIG_IGN);  
-  signal(SIGTSTP, SIG_IGN);  
-  int line_num = 0;
+  signal(SIGTSTP, SIG_IGN); 
+  int line_num=0;
+  static char line[4096];
   while (1) {
-    char* line = NULL;
-    size_t size = 0;
-    if (shell_is_interactive)
-      /* Please only print shell prompts when standard input is not a tty */
+    if (shell_is_interactive) {
       fprintf(stdout, "%d: ", line_num++);
-    if (getline(&line, &size, stdin) == -1) {
-      if (feof(stdin)) {
-        exit(0);
-      } else {
-        perror("getline");
-        continue;
-      }
+      fflush(stdout);
     }
 
-    line[strcspn(line, "\n")] = 0;
-
+    if (!fgets(line, 4096, stdin)) {
+      break;
+    }
+    
     struct tokens* tokens = tokenize(line);
-    if (tokens == NULL || tokens_get_length(tokens) == 0) {
-      free(line);
-      continue;
-    }
-
-    char* first_token = tokens_get_token(tokens, 0);
-    if (first_token == NULL) {
+    if (tokens_get_length(tokens) == 0) {
       tokens_destroy(tokens);
-      free(line);
       continue;
     }
 
-    int cmd_index = lookup(first_token);
-    if (cmd_index >= 0) {
-      cmd_table[cmd_index].fun(tokens);
-    } else {
-      bool background = false;
-      int token_length = tokens_get_length(tokens);
-      if (strcmp(tokens_get_token(tokens, token_length - 1), "&") == 0) {
-        background = true;
-        tokens->tokens[token_length - 1] = NULL; 
-        tokens->tokens_length--; 
+    char* cmd = tokens_get_token(tokens, 0);
+    int fundex = lookup(cmd);
+    if (fundex >= 0) {
+      if(fundex!=5) cmd_table[fundex].fun(tokens);
+      else
+      {
+        run_command_with_pipes(bg_tokens, 0);
       }
-
-      run_command_with_pipes(tokens, background);
-
+    } else {
+      int background = 0;
+      if (tokens_get_length(tokens) > 1 && strcmp(tokens_get_token(tokens, tokens_get_length(tokens) - 1), "&") == 0) {
+        background = 1;
+        tokens->tokens_length--;
+        if(strcmp(cmd,"/usr/bin/tee")==0)
+        {
+          char *ampersand = strchr(line, '&');
+          if (ampersand != NULL) *ampersand = '\0';
+          struct tokens* tokens = tokenize(line);
+          bg_tokens=tokens;
+        }
+        else run_command_with_pipes(tokens, background);
+      }
+      else run_command_with_pipes(tokens, background);
     }
-
     tokens_destroy(tokens);
-    free(line);
   }
-
   return 0;
 }
