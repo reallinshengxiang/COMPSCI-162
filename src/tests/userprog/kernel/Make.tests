@@ -1,0 +1,14 @@
+# -*- makefile -*-
+
+# Test names.
+tests/userprog/kernel_TESTS = $(addprefix tests/userprog/kernel/,              \
+fp-kasm fp-kinit)
+
+# Sources for tests.
+tests/userprog/kernel_SRC  = tests/userprog/kernel/tests.c
+tests/userprog/kernel_SRC += tests/userprog/kernel/fp-kasm.c
+tests/userprog/kernel_SRC += tests/userprog/kernel/fp-kinit.c
+
+tests/userprog/kernel/%.output: RUNCMD = rukt
+
+# -*- makefile -*-
