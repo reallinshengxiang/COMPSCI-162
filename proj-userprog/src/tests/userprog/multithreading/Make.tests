@@ -1,0 +1,95 @@
+# -*- makefile -*-
+
+tests/main.o: DEFINES = -DTHREADS
+tests/%.output: FILESYSSOURCE = --filesys-size=2
+tests/%.output: PUTFILES = $(filter-out kernel.bin loader.bin, $^)
+
+tests/userprog/multithreading_TESTS = tests/userprog/multithreading/lock-simple
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/lock-init-fail
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/lock-dbl-acq
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/lock-dbl-rel
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/lock-acq-fail
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/lock-data
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/lock-ll
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/sema-simple
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/sema-init-fail
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/sema-up-fail
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/sema-wait
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/sema-wait-many
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/synch-many
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/create-simple
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/create-many
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/arr-search
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/reuse-stack
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/create-reuse
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/exit-simple
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/join-fail
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/join-recur
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/file-join
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/join-exit-1
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/join-exit-2
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/wait-fail
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/exec-thread-1
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/exec-thread-n
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/exit-clean-1
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/exit-clean-2
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/multi-oom-mt
+tests/userprog/multithreading_TESTS += tests/userprog/multithreading/pcb-syn
+
+tests/userprog/multithreading_PROGS = $(tests/userprog/multithreading_TESTS) $(addprefix \
+tests/userprog/multithreading/,child-simple)
+
+tests/userprog/multithreading/lock-simple_SRC = tests/userprog/multithreading/lock-simple.c
+tests/userprog/multithreading/lock-init-fail_SRC = tests/userprog/multithreading/lock-init-fail.c
+tests/userprog/multithreading/lock-dbl-acq_SRC = tests/userprog/multithreading/lock-dbl-acq.c
+tests/userprog/multithreading/lock-dbl-rel_SRC = tests/userprog/multithreading/lock-dbl-rel.c
+tests/userprog/multithreading/lock-acq-fail_SRC = tests/userprog/multithreading/lock-acq-fail.c
+tests/userprog/multithreading/lock-data_SRC = tests/userprog/multithreading/lock-data.c
+tests/userprog/multithreading/lock-ll_SRC = tests/userprog/multithreading/lock-ll.c
+tests/userprog/multithreading/sema-simple_SRC = tests/userprog/multithreading/sema-simple.c
+tests/userprog/multithreading/sema-init-fail_SRC = tests/userprog/multithreading/sema-init-fail.c
+tests/userprog/multithreading/sema-up-fail_SRC = tests/userprog/multithreading/sema-up-fail.c
+tests/userprog/multithreading/sema-wait_SRC = tests/userprog/multithreading/sema-wait.c
+tests/userprog/multithreading/sema-wait-many_SRC = tests/userprog/multithreading/sema-wait-many.c
+tests/userprog/multithreading/synch-many_SRC = tests/userprog/multithreading/synch-many.c
+tests/userprog/multithreading/create-simple_SRC = tests/userprog/multithreading/create-simple.c
+tests/userprog/multithreading/create-many_SRC = tests/userprog/multithreading/create-many.c
+tests/userprog/multithreading/arr-search_SRC = tests/userprog/multithreading/arr-search.c
+tests/userprog/multithreading/reuse-stack_SRC = tests/userprog/multithreading/reuse-stack.c
+tests/userprog/multithreading/create-reuse_SRC = tests/userprog/multithreading/create-reuse.c
+tests/userprog/multithreading/exit-simple_SRC = tests/userprog/multithreading/exit-simple.c
+tests/userprog/multithreading/join-fail_SRC = tests/userprog/multithreading/join-fail.c
+tests/userprog/multithreading/join-recur_SRC = tests/userprog/multithreading/join-recur.c
+tests/userprog/multithreading/file-join_SRC = tests/userprog/multithreading/file-join.c
+tests/userprog/multithreading/join-exit-1_SRC = tests/userprog/multithreading/join-exit-1.c
+tests/userprog/multithreading/join-exit-2_SRC = tests/userprog/multithreading/join-exit-2.c
+tests/userprog/multithreading/wait-fail_SRC = tests/userprog/multithreading/wait-fail.c
+tests/userprog/multithreading/child-simple_SRC = tests/userprog/child-simple.c
+tests/userprog/multithreading/exec-thread-1_SRC = tests/userprog/multithreading/exec-thread-1.c
+tests/userprog/multithreading/exec-thread-n_SRC = tests/userprog/multithreading/exec-thread-n.c
+tests/userprog/multithreading/exit-clean-1_SRC = tests/userprog/multithreading/exit-clean.c
+tests/userprog/multithreading/exit-clean-2_SRC = tests/userprog/multithreading/exit-clean.c
+tests/userprog/multithreading/multi-oom-mt_SRC = tests/userprog/multithreading/multi-oom-mt.c
+tests/userprog/multithreading/pcb-syn_SRC = tests/userprog/multithreading/pcb-syn.c
+
+$(foreach prog,$(tests/userprog/multithreading_PROGS),$(eval $(prog)_SRC += tests/lib.c tests/main.c))
+
+tests/userprog/multithreading/exec-thread-1_ARGS = thread
+tests/userprog/multithreading/exec-thread-n_ARGS = root
+tests/userprog/multithreading/exit-clean-1_ARGS = root exit 1
+tests/userprog/multithreading/exit-clean-2_ARGS = root exception 2
+
+tests/userprog/multithreading/file-join_PUTFILES += tests/userprog/sample.txt
+tests/userprog/multithreading/wait-fail_PUTFILES += tests/userprog/multithreading/child-simple
+tests/userprog/multithreading/exit-clean-1_PUTFILES += tests/userprog/sample.txt
+tests/userprog/multithreading/exit-clean-2_PUTFILES += tests/userprog/sample.txt
+tests/userprog/multithreading/pcb-syn_PUTFILES += tests/userprog/sample.txt
+
+# Exceptions
+tests/userprog/multithreading/multi-oom-mt.output: TIMEOUT = 360
+tests/userprog/multithreading/multi-oom-mt_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/multi-oom-mt_SRC))
+tests/userprog/multithreading/child-simple_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/child-simple_SRC))
+tests/userprog/multithreading/exec-thread-1_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/exec-thread-1_SRC))
+tests/userprog/multithreading/exec-thread-n_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/exec-thread-n_SRC))
+tests/userprog/multithreading/exit-clean-1_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/exit-clean-1_SRC))
+tests/userprog/multithreading/exit-clean-2_SRC := $(filter-out tests/main.c,$(tests/userprog/multithreading/exit-clean-2_SRC))
