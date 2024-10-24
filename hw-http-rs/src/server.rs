@@ -51,15 +51,9 @@ async fn listen(port: u16) -> Result<()> {
     // Hint: you should call `handle_socket` in this function.
     //todo!("TODO: Part 2")
     let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).await?;
-    log::info!("HTTP server listening on 0.0.0.0:{}", port);
     loop {
         let (socket, addr) = listener.accept().await?;
-        log::info!("Accepted connection from: {}", addr);
-        tokio::spawn(async move {
-            if let Err(e) = handle_socket(socket).await {
-                log::error!("Error handling socket: {}", e);
-            }
-        });
+        tokio::spawn(async move {handle_socket(socket).await});
     }
 }
 
@@ -145,6 +139,7 @@ async fn handle_directory_request(socket: &mut TcpStream, mut path_buf: PathBuf)
     }
     Ok(())
 }
+
 
 fn format_href(path: &Path) -> String {
     let path_str = path.to_string_lossy().replace("./", "");
