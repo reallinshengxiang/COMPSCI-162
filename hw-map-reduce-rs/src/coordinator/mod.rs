@@ -17,7 +17,7 @@ use crate::rpc::coordinator::*;
 use crate::*;
 
 pub mod args;
-const TASK_TIMEOUT_SECS: u64 = 3;
+const TASK_TIMEOUT_SECS: u64 = 7;
 
 pub struct MapTask{
     pub map_task_number: TaskNumber,
@@ -337,6 +337,22 @@ impl coordinator_server::Coordinator for Coordinator {
                         break;
                     }
                 }
+                if map_task.is_none() {
+                    let task = GetTaskReply {
+                        job_id: 0,
+                        output_dir: "".to_string(),
+                        app: "".to_string(),
+                        task: 0,
+                        file: "".to_string(),
+                        n_reduce: 0,
+                        n_map: 0,
+                        reduce: false,
+                        wait: true,
+                        map_task_assignments: Vec::new(),
+                        args: Vec::new(),
+                    };
+                    return Ok(Response::new(task));
+                } 
                 let map_task = map_task.unwrap();
                 map_task.worker_id = worker_id;
                 map_task.map_task_status = 1;
@@ -356,6 +372,22 @@ impl coordinator_server::Coordinator for Coordinator {
                         break;
                     }
                 }
+                if reduce_task.is_none() {
+                    let task = GetTaskReply {
+                        job_id: 0,
+                        output_dir: "".to_string(),
+                        app: "".to_string(),
+                        task: 0,
+                        file: "".to_string(),
+                        n_reduce: 0,
+                        n_map: 0,
+                        reduce: false,
+                        wait: true,
+                        map_task_assignments: Vec::new(),
+                        args: Vec::new(),
+                    };
+                    return Ok(Response::new(task));
+                } 
                 let reduce_task = reduce_task.unwrap();
                 reduce_task.reduce_task_status = 1; 
                 reduce_task.worker_id = worker_id;
