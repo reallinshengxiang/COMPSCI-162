@@ -1,0 +1,33 @@
+[package]
+name = "lab_grpc"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+tonic = "0.7.2"
+prost = "0.10.4"
+futures-core = "0.3.21"
+futures-util = "0.3.21"
+tokio = { version = "1.20.0", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process"] }
+tokio-stream = "0.1.9"
+tokio-util = "0.7.3"
+
+async-stream = "0.3.3"
+serde = { version = "1.0.139", features = ["derive"] }
+serde_json = "1.0.82"
+rand = "0.8.5"
+anyhow = "1.0.58"
+log = "0.4.17"
+env_logger = "0.9.0"
+clap = { version = "3.2.12", features = ["derive"] }
+
+[build-dependencies]
+tonic-build = "0.7.2"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"

@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package coordinator;
+
+service Coordinator {
+  // An example RPC, to show you how to use the RPC framework.
+  // You should delete this RPC and add your own.
+  rpc Example (ExampleRequest) returns (ExampleReply) {}
+  rpc SubmitJob (SubmitJobRequest) returns (SubmitJobReply) {}
+  rpc PollJob (PollJobRequest) returns (PollJobReply) {}
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatReply) {}
+  rpc Register (RegisterRequest) returns (RegisterReply) {}
+  rpc GetTask (GetTaskRequest) returns (GetTaskReply) {}
+  rpc FinishTask (FinishTaskRequest) returns (FinishTaskReply) {}
+  rpc FailTask (FailTaskRequest) returns (FailTaskReply) {}
+}
+
+message ExampleRequest {
+  string name = 1;
+}
+
+message ExampleReply {
+  string message = 1;
+}
+
+message SubmitJobRequest {
+  repeated string files = 1;
+  string output_dir = 2;
+  string app = 3;
+  uint32 n_reduce = 4;
+  bytes args = 5;
+}
+
+message SubmitJobReply {
+  uint32 job_id = 1;
+}
+
+message PollJobRequest {
+  uint32 job_id = 1;
+}
+
+message PollJobReply {
+  bool done = 1;
+  bool failed = 2;
+  repeated string errors = 3;
+}
+
+message HeartbeatRequest {
+  uint32 worker_id = 1;
+}
+
+message HeartbeatReply {}
+
+message RegisterRequest {}
+
+message RegisterReply {
+  uint32 worker_id = 1;
+}
+
+message GetTaskRequest {
+  uint32 worker_id = 1;
+}
+
+message MapTaskAssignment {
+  uint32 task = 1;
+  uint32 worker_id = 2;
+}
+
+message GetTaskReply {
+  uint32 job_id = 1;
+  string output_dir = 2;
+  string app = 3;
+  uint32 task = 4;
+  string file = 5;
+  uint32 n_reduce = 6;
+  uint32 n_map = 7;
+  bool reduce = 8;
+  bool wait = 9;
+  repeated MapTaskAssignment map_task_assignments = 10;
+  bytes args = 11;
+}
+
+message FinishTaskRequest {
+  uint32 worker_id = 1;
+  uint32 job_id = 2;
+  uint32 task = 3;
+  bool reduce = 4;
+}
+
+message FinishTaskReply {}
+
+message FailTaskRequest {
+  uint32 worker_id = 1;
+  uint32 job_id = 2;
+  uint32 task = 3;
+  bool reduce = 4;
+  bool retry = 5;
+  string error = 6;
+}
+
+message FailTaskReply {}

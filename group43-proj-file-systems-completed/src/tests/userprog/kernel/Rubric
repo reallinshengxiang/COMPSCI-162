@@ -1,0 +1,7 @@
+Functionality of features that require the kernel:
+
+- Test floating point correctness
+5	fp-kasm
+
+- Test floating point robustness
+2	fp-kinit
