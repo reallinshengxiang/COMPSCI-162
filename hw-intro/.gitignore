@@ -1,0 +1,5 @@
+limits
+map
+words/words
+!wc_sort.o
+!wc_sort_arm.o

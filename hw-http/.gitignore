@@ -1,0 +1,17 @@
+httpserver
+forkserver
+threadserver
+poolserver
+*.html
+*.png
+*.jpg
+*.txt
+# Ignore anything students add to the www/ directory
+www/**
+!www/index.html
+!www/my_documents/
+!www/my_documents/contributors.txt
+!www/my_documents/credit.txt
+!www/my_documents/http-meme.png
+!www/my_documents/WEB_SCALE.jpg
+!www/my_documents/wholesome_facts.txt

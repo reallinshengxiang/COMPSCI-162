@@ -1,0 +1,12 @@
+lwords
+pthread
+pwords
+words
+!words.o
+!lwords.o
+!word_count.o
+!word_helpers.o
+!words_arm.o
+!lwords_arm.o
+!word_count_arm.o
+!word_helpers_arm.o
