@@ -1,0 +1,1168 @@
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/lib/float.h b/pintos-solutions/cs162-skeleton/pintos/src/lib/float.h
+index dc415aa..83eb4dc 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/lib/float.h
++++ b/pintos-solutions/cs162-skeleton/pintos/src/lib/float.h
+@@ -19,6 +19,12 @@ static inline int fpu_pop(void) {
+   return val;
+ }
+ 
++/* Stores a clean copy of the FPU to a 108B memory location DEST.
++   Uses a 108B memory location BUF as a temporary storage */
++static inline void fpu_save_init(void* dest, void* buf) {
++  asm volatile("fsave (%0); fninit; fsave (%1); frstor (%2)" : : "r"(buf), "r"(dest), "r"(buf));
++}
++
+ int sys_sum_to_e(int);
+ double sum_to_e(int);
+ double abs_val(double);
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/init.c b/pintos-solutions/cs162-skeleton/pintos/src/threads/init.c
+index 48eb48a..ceebdee 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/init.c
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/init.c
+@@ -61,6 +61,7 @@ static const char* swap_bdev_name;
+ static size_t user_page_limit = SIZE_MAX;
+ 
+ static void bss_init(void);
++static inline void fp_init(void);
+ static void paging_init(void);
+ 
+ static char** read_command_line(void);
+@@ -80,6 +81,9 @@ int main(void) {
+   /* Clear BSS. */
+   bss_init();
+ 
++  /* Floating Point Initialization */
++  fp_init();
++
+   /* Break command line into arguments and parse options. */
+   argv = read_command_line();
+   argv = parse_options(argv);
+@@ -151,6 +155,9 @@ static void bss_init(void) {
+   memset(&_start_bss, 0, &_end_bss - &_start_bss);
+ }
+ 
++/* Initialize the x87 FPU by calling the fninit instruction */
++static inline void fp_init(void) { asm("fninit"); }
++
+ /* Populates the base page directory and page table with the
+    kernel virtual mapping, and then sets up the CPU to use the
+    new page directory.  Points init_page_dir to the page
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/interrupt.h b/pintos-solutions/cs162-skeleton/pintos/src/threads/interrupt.h
+index 30edbf7..a1b4697 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/interrupt.h
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/interrupt.h
+@@ -19,6 +19,7 @@ enum intr_level intr_disable(void);
+ struct intr_frame {
+   /* Pushed by intr_entry in intr-stubs.S.
+        These are the interrupted task's saved registers. */
++  uint32_t fpu[27];   /* Saved FPU */
+   uint32_t edi;       /* Saved EDI. */
+   uint32_t esi;       /* Saved ESI. */
+   uint32_t ebp;       /* Saved EBP. */
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/intr-stubs.S b/pintos-solutions/cs162-skeleton/pintos/src/threads/intr-stubs.S
+index 73eb5a0..1a9c155 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/intr-stubs.S
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/intr-stubs.S
+@@ -23,13 +23,15 @@ intr_entry:
+ 	pushl %fs
+ 	pushl %gs
+ 	pushal
++	subl $108, %esp
++	fsave (%esp)
+ 
+ 	/* Set up kernel environment. */
+ 	cld			/* String instructions go upward. */
+ 	mov $SEL_KDSEG, %eax	/* Initialize segment registers. */
+ 	mov %eax, %ds
+ 	mov %eax, %es
+-	leal 56(%esp), %ebp	/* Set up frame pointer. */
++	leal 164(%esp), %ebp	/* Set up frame pointer. */
+ 
+ 	/* Call interrupt handler. */
+ 	pushl %esp
+@@ -50,6 +52,8 @@ intr_entry:
+ .func intr_exit
+ intr_exit:
+ 	/* Restore caller's registers. */
++	frstor (%esp)
++	addl $108, %esp
+ 	popal
+ 	popl %gs
+ 	popl %fs
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/start.S b/pintos-solutions/cs162-skeleton/pintos/src/threads/start.S
+index d7e0fee..b9d4b71 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/start.S
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/start.S
+@@ -143,11 +143,9 @@ start:
+ #    PG (Paging): turns on paging.
+ #    WP (Write Protect): if unset, ring 0 code ignores
+ #       write-protect bits in page tables (!).
+-#    EM (Emulation): forces floating-point instructions to trap.
+-#       We don't (yet) support floating point.
+ 
+ 	movl %cr0, %eax
+-	orl $CR0_PE | CR0_PG | CR0_WP | CR0_EM, %eax
++	orl $CR0_PE | CR0_PG | CR0_WP, %eax
+ 	movl %eax, %cr0
+ 
+ # We're now in protected mode in a 16-bit segment.  The CPU still has
+@@ -201,4 +199,3 @@ gdtdesc:
+ .globl init_ram_pages
+ init_ram_pages:
+ 	.long 0
+-
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.S b/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.S
+index 8d9d529..429ae8c 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.S
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.S
+@@ -27,6 +27,8 @@ switch_threads:
+ 	pushl %ebp
+ 	pushl %esi
+ 	pushl %edi
++	subl $108, %esp
++	fsave (%esp)
+ 
+ 	# Get offsetof (struct thread, stack).
+ .globl thread_stack_ofs
+@@ -41,6 +43,8 @@ switch_threads:
+ 	movl (%ecx,%edx,1), %esp
+ 
+ 	# Restore caller's register state.
++	frstor (%esp)
++	addl $108, %esp
+ 	popl %edi
+ 	popl %esi
+ 	popl %ebp
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.h b/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.h
+index f89e020..f730985 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.h
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/switch.h
+@@ -4,6 +4,7 @@
+ #ifndef __ASSEMBLER__
+ /* switch_thread()'s stack frame. */
+ struct switch_threads_frame {
++  uint32_t fpu[27];    /* Saved FPU (108 bytes) */
+   uint32_t edi;        /*  0: Saved %edi. */
+   uint32_t esi;        /*  4: Saved %esi. */
+   uint32_t ebp;        /*  8: Saved %ebp. */
+@@ -31,7 +32,7 @@ void switch_thunk(void);
+ #endif
+ 
+ /* Offsets used by switch.S. */
+-#define SWITCH_CUR 20
+-#define SWITCH_NEXT 24
++#define SWITCH_CUR 128
++#define SWITCH_NEXT 132
+ 
+ #endif /* threads/switch.h */
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.c b/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.c
+index 1202612..271c3c6 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.c
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.c
+@@ -1,5 +1,6 @@
+ #include "threads/thread.h"
+ #include <debug.h>
++#include <float.h>
+ #include <stddef.h>
+ #include <random.h>
+ #include <stdio.h>
+@@ -13,6 +14,7 @@
+ #include "threads/vaddr.h"
+ #ifdef USERPROG
+ #include "userprog/process.h"
++#include "userprog/syscall.h"
+ #endif
+ 
+ /* Random value for struct thread's `magic' member.
+@@ -178,6 +180,7 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
+   struct kernel_thread_frame* kf;
+   struct switch_entry_frame* ef;
+   struct switch_threads_frame* sf;
++  uint32_t fpu_curr[27];
+   tid_t tid;
+ 
+   ASSERT(function != NULL);
+@@ -203,6 +206,7 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
+ 
+   /* Stack frame for switch_threads(). */
+   sf = alloc_frame(t, sizeof *sf);
++  fpu_save_init(&sf->fpu, &fpu_curr);
+   sf->eip = switch_entry;
+   sf->ebp = 0;
+ 
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.h b/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.h
+index e67ca2d..dbd005e 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.h
++++ b/pintos-solutions/cs162-skeleton/pintos/src/threads/thread.h
+@@ -4,7 +4,6 @@
+ #include <debug.h>
+ #include <list.h>
+ #include <stdint.h>
+-#include "threads/synch.h"
+ #include "threads/fixed-point.h"
+ 
+ /* States in a thread's life cycle. */
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/userprog/exception.c b/pintos-solutions/cs162-skeleton/pintos/src/userprog/exception.c
+index 2361423..290ac08 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/userprog/exception.c
++++ b/pintos-solutions/cs162-skeleton/pintos/src/userprog/exception.c
+@@ -135,6 +135,13 @@ static void page_fault(struct intr_frame* f) {
+   write = (f->error_code & PF_W) != 0;
+   user = (f->error_code & PF_U) != 0;
+ 
++  /* Handle bad dereferences from system call implementations. */
++  if (!user) {
++    f->eip = (void (*)(void))f->eax;
++    f->eax = 0;
++    return;
++  }
++
+   /* To implement virtual memory, delete the rest of the function
+      body, and replace it with code that brings in the page to
+      which fault_addr refers. */
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.c b/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.c
+index 01ddda4..39d172a 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.c
++++ b/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.c
+@@ -1,5 +1,6 @@
+ #include "userprog/process.h"
+ #include <debug.h>
++#include <float.h>
+ #include <inttypes.h>
+ #include <round.h>
+ #include <stdio.h>
+@@ -8,6 +9,7 @@
+ #include "userprog/gdt.h"
+ #include "userprog/pagedir.h"
+ #include "userprog/tss.h"
++#include "userprog/syscall.h"
+ #include "filesys/directory.h"
+ #include "filesys/file.h"
+ #include "filesys/filesys.h"
+@@ -20,12 +22,21 @@
+ #include "threads/thread.h"
+ #include "threads/vaddr.h"
+ 
+-static struct semaphore temporary;
+ static thread_func start_process NO_RETURN;
+ static thread_func start_pthread NO_RETURN;
+-static bool load(const char* file_name, void (**eip)(void), void** esp);
++static bool load(const char* cmd_line, void (**eip)(void), void** esp);
+ bool setup_thread(void (**eip)(void), void** esp);
+ 
++/* Data structure shared between process_execute() in the
++   invoking thread and start_process() in the newly invoked
++   thread. */
++struct exec_info {
++  const char* file_name;           /* Program to load. */
++  struct semaphore load_done;      /* "Up"ed when loading complete. */
++  struct wait_status* wait_status; /* Child process. */
++  bool success;                    /* Program successfully loaded? */
++};
++
+ /* Initializes user programs in the system by ensuring the main
+    thread has a minimal PCB so that it can execute and wait for
+    the first user process. Any additions to the PCB should be also
+@@ -42,6 +53,10 @@ void userprog_init(void) {
+   t->pcb = calloc(sizeof(struct process), 1);
+   success = t->pcb != NULL;
+ 
++  /* Main only needs a list of children */
++  if (success)
++    list_init(&t->pcb->children);
++
+   /* Kill the kernel if we did not succeed */
+   ASSERT(success);
+ }
+@@ -51,31 +66,39 @@ void userprog_init(void) {
+    before process_execute() returns.  Returns the new process's
+    process id, or TID_ERROR if the thread cannot be created. */
+ pid_t process_execute(const char* file_name) {
+-  char* fn_copy;
++  struct exec_info exec;
++  char thread_name[16];
++  char* save_ptr;
+   tid_t tid;
+ 
+-  sema_init(&temporary, 0);
+-  /* Make a copy of FILE_NAME.
+-     Otherwise there's a race between the caller and load(). */
+-  fn_copy = palloc_get_page(0);
+-  if (fn_copy == NULL)
+-    return TID_ERROR;
+-  strlcpy(fn_copy, file_name, PGSIZE);
++  /* Initialize exec_info. */
++  exec.file_name = file_name;
++  sema_init(&exec.load_done, 0);
+ 
+   /* Create a new thread to execute FILE_NAME. */
+-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+-  if (tid == TID_ERROR)
+-    palloc_free_page(fn_copy);
++  strlcpy(thread_name, file_name, sizeof thread_name);
++  strtok_r(thread_name, " ", &save_ptr);
++  tid = thread_create(thread_name, PRI_DEFAULT, start_process, &exec);
++  if (tid != TID_ERROR) {
++    sema_down(&exec.load_done);
++    if (exec.success)
++      list_push_back(&thread_current()->pcb->children, &exec.wait_status->elem);
++    else
++      tid = TID_ERROR;
++  }
++
+   return tid;
+ }
+ 
+ /* A thread function that loads a user process and starts it
+    running. */
+-static void start_process(void* file_name_) {
+-  char* file_name = (char*)file_name_;
++static void start_process(void* exec_) {
+   struct thread* t = thread_current();
++
++  struct exec_info* exec = exec_;
+   struct intr_frame if_;
+-  bool success, pcb_success;
++  uint32_t fpu_curr[27];
++  bool success, pcb_success, ws_success;
+ 
+   /* Allocate process control block */
+   struct process* new_pcb = malloc(sizeof(struct process));
+@@ -89,17 +112,36 @@ static void start_process(void* file_name_) {
+     t->pcb = new_pcb;
+ 
+     // Continue initializing the PCB as normal
++    list_init(&t->pcb->children);
++    list_init(&t->pcb->fds);
++    t->pcb->next_handle = 2;
+     t->pcb->main_thread = t;
+     strlcpy(t->pcb->process_name, t->name, sizeof t->name);
+   }
+ 
++  /* Allocate wait_status. */
++  if (success) {
++    exec->wait_status = t->pcb->wait_status = malloc(sizeof *exec->wait_status);
++    success = ws_success = exec->wait_status != NULL;
++  }
++
++  /* Initialize wait_status. */
++  if (success) {
++    lock_init(&exec->wait_status->lock);
++    exec->wait_status->ref_cnt = 2;
++    exec->wait_status->pid = t->tid;
++    exec->wait_status->exit_code = -1;
++    sema_init(&exec->wait_status->dead, 0);
++  }
++
+   /* Initialize interrupt frame and load executable. */
+   if (success) {
+     memset(&if_, 0, sizeof if_);
++    fpu_save_init(&if_.fpu, &fpu_curr);
+     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
+     if_.cs = SEL_UCSEG;
+     if_.eflags = FLAG_IF | FLAG_MBS;
+-    success = load(file_name, &if_.eip, &if_.esp);
++    success = load(exec->file_name, &if_.eip, &if_.esp);
+   }
+ 
+   /* Handle failure with succesful PCB malloc. Must free the PCB */
+@@ -112,12 +154,15 @@ static void start_process(void* file_name_) {
+     free(pcb_to_free);
+   }
+ 
+-  /* Clean up. Exit on failure or jump to userspace */
+-  palloc_free_page(file_name);
+-  if (!success) {
+-    sema_up(&temporary);
++  /* Handle failure with successful wait_status malloc */
++  if (!success && ws_success)
++    free(exec->wait_status);
++
++  /* Notify parent thread and clean up. */
++  exec->success = success;
++  sema_up(&exec->load_done);
++  if (!success)
+     thread_exit();
+-  }
+ 
+   /* Start the user process by simulating a return from an
+      interrupt, implemented by intr_exit (in
+@@ -129,23 +174,47 @@ static void start_process(void* file_name_) {
+   NOT_REACHED();
+ }
+ 
++/* Releases one reference to CS and, if it is now unreferenced,
++   frees it. */
++static void release_child(struct wait_status* cs) {
++  int new_ref_cnt;
++
++  lock_acquire(&cs->lock);
++  new_ref_cnt = --cs->ref_cnt;
++  lock_release(&cs->lock);
++
++  if (new_ref_cnt == 0)
++    free(cs);
++}
++
+ /* Waits for process with PID child_pid to die and returns its exit status.
+    If it was terminated by the kernel (i.e. killed due to an
+    exception), returns -1.  If child_pid is invalid or if it was not a
+    child of the calling process, or if process_wait() has already
+    been successfully called for the given PID, returns -1
+-   immediately, without waiting.
+-
+-   This function will be implemented in problem 2-2.  For now, it
+-   does nothing. */
+-int process_wait(pid_t child_pid UNUSED) {
+-  sema_down(&temporary);
+-  return 0;
++   immediately, without waiting. */
++int process_wait(pid_t child_pid) {
++  struct thread* cur = thread_current();
++  struct list_elem* e;
++
++  for (e = list_begin(&cur->pcb->children); e != list_end(&cur->pcb->children); e = list_next(e)) {
++    struct wait_status* cs = list_entry(e, struct wait_status, elem);
++    if (cs->pid == child_pid) {
++      int exit_code;
++      list_remove(e);
++      sema_down(&cs->dead);
++      exit_code = cs->exit_code;
++      release_child(cs);
++      return exit_code;
++    }
++  }
++  return -1;
+ }
+ 
+ /* Free the current process's resources. */
+ void process_exit(void) {
+   struct thread* cur = thread_current();
++  struct list_elem *e, *next;
+   uint32_t* pd;
+ 
+   /* If this thread does not have a PCB, don't worry */
+@@ -154,6 +223,23 @@ void process_exit(void) {
+     NOT_REACHED();
+   }
+ 
++  /* Close executable (and allow writes). */
++  safe_file_close(cur->pcb->bin_file);
++
++  /* Free entries of children list. */
++  for (e = list_begin(&cur->pcb->children); e != list_end(&cur->pcb->children); e = next) {
++    struct wait_status* cs = list_entry(e, struct wait_status, elem);
++    next = list_remove(e);
++    release_child(cs);
++  }
++
++  /* Close all currently open file descriptors */
++  while (!list_empty(&cur->pcb->fds)) {
++    e = list_begin(&cur->pcb->fds);
++    struct file_descriptor* fd = list_entry(e, struct file_descriptor, elem);
++    sys_close(fd->handle);
++  }
++
+   /* Destroy the current process's page directory and switch back
+      to the kernel-only page directory. */
+   pd = cur->pcb->pagedir;
+@@ -170,6 +256,14 @@ void process_exit(void) {
+     pagedir_destroy(pd);
+   }
+ 
++  /* Notify parent that we're dead, as the last thing we do. */
++  if (cur->pcb->wait_status != NULL) {
++    struct wait_status* cs = cur->pcb->wait_status;
++    printf("%s: exit(%d)\n", cur->pcb->process_name, cs->exit_code);
++    sema_up(&cs->dead);
++    release_child(cs);
++  }
++
+   /* Free the PCB of this process and kill this thread
+      Avoid race where PCB is freed before t->pcb is set to NULL
+      If this happens, then an unfortuantely timed timer interrupt
+@@ -177,8 +271,6 @@ void process_exit(void) {
+   struct process* pcb_to_free = cur->pcb;
+   cur->pcb = NULL;
+   free(pcb_to_free);
+-
+-  sema_up(&temporary);
+   thread_exit();
+ }
+ 
+@@ -259,7 +351,7 @@ struct Elf32_Phdr {
+ #define PF_W 2 /* Writable. */
+ #define PF_R 4 /* Readable. */
+ 
+-static bool setup_stack(void** esp);
++static bool setup_stack(const char* cmd_line, void** esp);
+ static bool validate_segment(const struct Elf32_Phdr*, struct file*);
+ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t read_bytes,
+                          uint32_t zero_bytes, bool writable);
+@@ -268,12 +360,14 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t
+    Stores the executable's entry point into *EIP
+    and its initial stack pointer into *ESP.
+    Returns true if successful, false otherwise. */
+-bool load(const char* file_name, void (**eip)(void), void** esp) {
++bool load(const char* cmd_line, void (**eip)(void), void** esp) {
+   struct thread* t = thread_current();
++  char file_name[NAME_MAX + 2];
+   struct Elf32_Ehdr ehdr;
+   struct file* file = NULL;
+   off_t file_ofs;
+   bool success = false;
++  char* cp;
+   int i;
+ 
+   /* Allocate and activate page directory. */
+@@ -282,12 +376,21 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
+     goto done;
+   process_activate();
+ 
++  /* Extract file_name from command line. */
++  while (*cmd_line == ' ')
++    cmd_line++;
++  strlcpy(file_name, cmd_line, sizeof file_name);
++  cp = strchr(file_name, ' ');
++  if (cp != NULL)
++    *cp = '\0';
++
+   /* Open executable file. */
+-  file = filesys_open(file_name);
++  t->pcb->bin_file = file = filesys_open(file_name);
+   if (file == NULL) {
+     printf("load: %s: open failed\n", file_name);
+     goto done;
+   }
++  file_deny_write(file);
+ 
+   /* Read and verify executable header. */
+   if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
+@@ -348,7 +451,7 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
+   }
+ 
+   /* Set up stack. */
+-  if (!setup_stack(esp))
++  if (!setup_stack(cmd_line, esp))
+     goto done;
+ 
+   /* Start address. */
+@@ -358,7 +461,6 @@ bool load(const char* file_name, void (**eip)(void), void** esp) {
+ 
+ done:
+   /* We arrive here whether the load is successful or not. */
+-  file_close(file);
+   return success;
+ }
+ 
+@@ -463,17 +565,99 @@ static bool load_segment(struct file* file, off_t ofs, uint8_t* upage, uint32_t
+   return true;
+ }
+ 
+-/* Create a minimal stack by mapping a zeroed page at the top of
+-   user virtual memory. */
+-static bool setup_stack(void** esp) {
++/* Reverse the order of the ARGC pointers to char in ARGV. */
++static void reverse(int argc, char** argv) {
++  for (; argc > 1; argc -= 2, argv++) {
++    char* tmp = argv[0];
++    argv[0] = argv[argc - 1];
++    argv[argc - 1] = tmp;
++  }
++}
++
++/* Pushes the SIZE bytes in BUF onto the stack in KPAGE, whose
++   page-relative stack pointer is *OFS, and then adjusts *OFS
++   appropriately.  The bytes pushed are rounded to a 32-bit
++   boundary.
++
++   If successful, returns a pointer to the newly pushed object.
++   On failure, returns a null pointer. */
++static void* push(uint8_t* kpage, size_t* ofs, const void* buf, size_t size) {
++  size_t padsize = ROUND_UP(size, sizeof(uint32_t));
++  if (*ofs < padsize)
++    return NULL;
++
++  *ofs -= padsize;
++  memcpy(kpage + *ofs + (padsize - size), buf, size);
++  return kpage + *ofs + (padsize - size);
++}
++
++/* Sets up command line arguments in KPAGE, which will be mapped
++   to UPAGE in user space.  The command line arguments are taken
++   from CMD_LINE, separated by spaces.  Sets *ESP to the initial
++   stack pointer for the process. */
++static bool init_cmd_line(uint8_t* kpage, uint8_t* upage, const char* cmd_line, void** esp) {
++  size_t ofs = PGSIZE;
++  char* const null = NULL;
++  char* cmd_line_copy;
++  char *karg, *saveptr;
++  int argc;
++  char** argv;
++  static void* arguments[MAX_ARGS];
++
++  /* Push command line string. */
++  cmd_line_copy = push(kpage, &ofs, cmd_line, strlen(cmd_line) + 1);
++  if (cmd_line_copy == NULL)
++    return false;
++
++  /* Parse command line into arguments */
++  argc = 0;
++  for (karg = strtok_r(cmd_line_copy, " ", &saveptr); karg != NULL;
++       karg = strtok_r(NULL, " ", &saveptr)) {
++    arguments[argc++] = upage + (karg - (char*)kpage);
++  }
++
++  // Insert padding to ensure the stack pointer will ultimately be 16-byte-aligned
++  size_t alignment_adjustment =
++      ((PGSIZE - ofs) + (argc + 1) * sizeof(char*) + sizeof(char**) + sizeof(int)) % 16;
++  ofs -= 16 - alignment_adjustment;
++
++  // Push sentinel null for argv[argc]
++  if (push(kpage, &ofs, &null, sizeof null) == NULL)
++    return false;
++
++  // Push command line arguments
++  for (int i = 0; i < argc; i++) {
++    if (push(kpage, &ofs, arguments + i, sizeof(void**)) == NULL)
++      return false;
++  }
++
++  /* Reverse the order of the command line arguments. */
++  argv = (char**)(upage + ofs);
++  reverse(argc, (char**)(kpage + ofs));
++
++  /* Push argv, argc, "return address". */
++  if (push(kpage, &ofs, &argv, sizeof argv) == NULL ||
++      push(kpage, &ofs, &argc, sizeof argc) == NULL ||
++      push(kpage, &ofs, &null, sizeof null) == NULL)
++    return false;
++
++  /* Set initial stack pointer. */
++  *esp = upage + ofs;
++  return true;
++}
++
++/* Create a minimal stack for T by mapping a page at the
++   top of user virtual memory.  Fills in the page using CMD_LINE
++   and sets *ESP to the stack pointer. */
++static bool setup_stack(const char* cmd_line, void** esp) {
+   uint8_t* kpage;
+   bool success = false;
+ 
+   kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+   if (kpage != NULL) {
+-    success = install_page(((uint8_t*)PHYS_BASE) - PGSIZE, kpage, true);
+-    if (success)
+-      *esp = PHYS_BASE;
++    uint8_t* upage = ((uint8_t*)PHYS_BASE) - PGSIZE;
++    if (install_page(upage, kpage, true))
++      success = init_cmd_line(kpage, upage, cmd_line, esp);
+     else
+       palloc_free_page(kpage);
+   }
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.h b/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.h
+index b9d9516..949057b 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.h
++++ b/pintos-solutions/cs162-skeleton/pintos/src/userprog/process.h
+@@ -2,11 +2,14 @@
+ #define USERPROG_PROCESS_H
+ 
+ #include "threads/thread.h"
++#include <list.h>
+ #include <stdint.h>
++#include "threads/synch.h"
+ 
+ // At most 8MB can be allocated to the stack
+ // These defines will be used in Project 2: Multithreading
+ #define MAX_STACK_PAGES (1 << 11)
++#define MAX_ARGS 1024
+ #define MAX_THREADS 127
+ 
+ /* PIDs and TIDs are the same type. PID should be
+@@ -24,9 +27,37 @@ typedef void (*stub_fun)(pthread_fun, void*);
+    of the process, which is `special`. */
+ struct process {
+   /* Owned by process.c. */
+-  uint32_t* pagedir;          /* Page directory. */
+-  char process_name[16];      /* Name of the main thread */
+-  struct thread* main_thread; /* Pointer to main thread */
++  struct wait_status* wait_status; /* This process's completion status. */
++  struct list children;            /* Completion status of children. */
++  uint32_t* pagedir;               /* Page directory. */
++  char process_name[16];           /* Name of the main thread */
++  struct file* bin_file;           /* Executable. */
++  struct thread* main_thread;      /* Pointer to main thread */
++
++  /* Owned by syscall.c. */
++  struct list fds; /* List of file descriptors. */
++  int next_handle; /* Next handle value. */
++};
++
++/* Tracks the completion of a process.
++   Reference held by both the parent, in its `children' list,
++   and by the child, in its `wait_status' pointer. */
++struct wait_status {
++  struct list_elem elem; /* `children' list element. */
++  struct lock lock;      /* Protects ref_cnt. */
++  int ref_cnt;           /* 2=child and parent both alive,
++                                           1=either child or parent alive,
++                                           0=child and parent both dead. */
++  pid_t pid;             /* Child process id. */
++  int exit_code;         /* Child exit code, if dead. */
++  struct semaphore dead; /* 1=child alive, 0=child dead. */
++};
++
++/* A file descriptor, for binding a file handle to a file. */
++struct file_descriptor {
++  struct list_elem elem; /* List element. */
++  struct file* file;     /* File. */
++  int handle;            /* File handle. */
+ };
+ 
+ void userprog_init(void);
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.c b/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.c
+index 46efb33..4947961 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.c
++++ b/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.c
+@@ -1,29 +1,395 @@
+ #include "userprog/syscall.h"
+ #include <stdio.h>
++#include <float.h>
++#include <string.h>
+ #include <syscall-nr.h>
++#include "devices/input.h"
++#include "devices/shutdown.h"
++#include "filesys/filesys.h"
++#include "filesys/file.h"
+ #include "threads/interrupt.h"
++#include "threads/malloc.h"
++#include "threads/palloc.h"
+ #include "threads/thread.h"
++#include "threads/vaddr.h"
+ #include "userprog/process.h"
++#include "userprog/pagedir.h"
+ 
+ static void syscall_handler(struct intr_frame*);
++static void copy_in(void*, const void*, size_t);
+ 
+-void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
++/* Serializes file system operations. */
++static struct lock fs_lock;
+ 
+-static void syscall_handler(struct intr_frame* f UNUSED) {
+-  uint32_t* args = ((uint32_t*)f->esp);
++void syscall_init(void) {
++  intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
++  lock_init(&fs_lock);
++}
++
++/* System call handler. */
++static void syscall_handler(struct intr_frame* f) {
++  typedef int syscall_function(int, int, int);
++
++  /* A system call. */
++  struct syscall {
++    size_t arg_cnt;         /* Number of arguments. */
++    syscall_function* func; /* Implementation. */
++  };
+ 
+-  /*
+-   * The following print statement, if uncommented, will print out the syscall
+-   * number whenever a process enters a system call. You might find it useful
+-   * when debugging. It will cause tests to fail, however, so you should not
+-   * include it in your final submission.
+-   */
++  /* Table of system calls. */
++  static const struct syscall syscall_table[] = {
++      {0, (syscall_function*)sys_halt},
++      {1, (syscall_function*)sys_exit},
++      {1, (syscall_function*)sys_exec},
++      {1, (syscall_function*)sys_wait},
++      {2, (syscall_function*)sys_create},
++      {1, (syscall_function*)sys_remove},
++      {1, (syscall_function*)sys_open},
++      {1, (syscall_function*)sys_filesize},
++      {3, (syscall_function*)sys_read},
++      {3, (syscall_function*)sys_write},
++      {2, (syscall_function*)sys_seek},
++      {1, (syscall_function*)sys_tell},
++      {1, (syscall_function*)sys_close},
++      {1, (syscall_function*)sys_practice},
++      {1, (syscall_function*)sys_compute_e},
++  };
+ 
+-  /* printf("System call number: %d\n", args[0]); */
++  const struct syscall* sc;
++  unsigned call_nr;
++  int args[3];
+ 
+-  if (args[0] == SYS_EXIT) {
+-    f->eax = args[1];
+-    printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
++  /* Get the system call. */
++  copy_in(&call_nr, f->esp, sizeof call_nr);
++  if (call_nr >= sizeof syscall_table / sizeof *syscall_table)
+     process_exit();
++  sc = syscall_table + call_nr;
++
++  if (sc->func == NULL)
++    process_exit();
++
++  /* Get the system call arguments. */
++  ASSERT(sc->arg_cnt <= sizeof args / sizeof *args);
++  memset(args, 0, sizeof args);
++  copy_in(args, (uint32_t*)f->esp + 1, sizeof *args * sc->arg_cnt);
++
++  /* Execute the system call,
++     and set the return value. */
++  f->eax = sc->func(args[0], args[1], args[2]);
++}
++
++/* Closes a file safely */
++void safe_file_close(struct file* file) {
++  lock_acquire(&fs_lock);
++  file_close(file);
++  lock_release(&fs_lock);
++}
++
++/* Returns true if UADDR is a valid, mapped user address,
++   false otherwise. */
++static bool verify_user(const void* uaddr) {
++  return (uaddr < PHYS_BASE && pagedir_get_page(thread_current()->pcb->pagedir, uaddr) != NULL);
++}
++
++/* Copies a byte from user address USRC to kernel address DST.
++   USRC must be below PHYS_BASE.
++   Returns true if successful, false if a segfault occurred. */
++static inline bool get_user(uint8_t* dst, const uint8_t* usrc) {
++  int eax;
++  asm("movl $1f, %%eax; movb %2, %%al; movb %%al, %0; 1:" : "=m"(*dst), "=&a"(eax) : "m"(*usrc));
++  return eax != 0;
++}
++
++/* Writes BYTE to user address UDST.
++   UDST must be below PHYS_BASE.
++   Returns true if successful, false if a segfault occurred. */
++static inline bool put_user(uint8_t* udst, uint8_t byte) {
++  int eax;
++  asm("movl $1f, %%eax; movb %b2, %0; 1:" : "=m"(*udst), "=&a"(eax) : "q"(byte));
++  return eax != 0;
++}
++
++/* Copies SIZE bytes from user address USRC to kernel address
++   DST.
++   Call process_exit() if any of the user accesses are invalid. */
++static void copy_in(void* dst_, const void* usrc_, size_t size) {
++  uint8_t* dst = dst_;
++  const uint8_t* usrc = usrc_;
++
++  for (; size > 0; size--, dst++, usrc++)
++    if (usrc >= (uint8_t*)PHYS_BASE || !get_user(dst, usrc))
++      process_exit();
++}
++
++/* Creates a copy of user string US in kernel memory
++   and returns it as a page that must be freed with
++   palloc_free_page().
++   Truncates the string at PGSIZE bytes in size.
++   Call process_exit() if any of the user accesses are invalid. */
++static char* copy_in_string(const char* us) {
++  char* ks;
++  size_t length;
++
++  ks = palloc_get_page(0);
++  if (ks == NULL)
++    process_exit();
++
++  for (length = 0; length < PGSIZE; length++) {
++    if (us >= (char*)PHYS_BASE || !get_user(ks + length, us++)) {
++      palloc_free_page(ks);
++      process_exit();
++    }
++
++    if (ks[length] == '\0')
++      return ks;
++  }
++  ks[PGSIZE - 1] = '\0';
++  return ks;
++}
++
++/* Halt system call. */
++int sys_halt(void) { shutdown_power_off(); }
++
++/* Exit system call. */
++int sys_exit(int exit_code) {
++  thread_current()->pcb->wait_status->exit_code = exit_code;
++  process_exit();
++  NOT_REACHED();
++}
++
++/* Exec system call. */
++int sys_exec(const char* ufile) {
++  pid_t tid;
++  char* kfile = copy_in_string(ufile);
++
++  lock_acquire(&fs_lock);
++  tid = process_execute(kfile);
++  lock_release(&fs_lock);
++
++  palloc_free_page(kfile);
++
++  return tid;
++}
++
++/* Wait system call. */
++int sys_wait(pid_t child) { return process_wait(child); }
++
++/* Create system call. */
++int sys_create(const char* ufile, unsigned initial_size) {
++  char* kfile = copy_in_string(ufile);
++  bool ok;
++
++  lock_acquire(&fs_lock);
++  ok = filesys_create(kfile, initial_size);
++  lock_release(&fs_lock);
++
++  palloc_free_page(kfile);
++
++  return ok;
++}
++
++/* Remove system call. */
++int sys_remove(const char* ufile) {
++  char* kfile = copy_in_string(ufile);
++  bool ok;
++
++  lock_acquire(&fs_lock);
++  ok = filesys_remove(kfile);
++  lock_release(&fs_lock);
++
++  palloc_free_page(kfile);
++
++  return ok;
++}
++
++/* Open system call. */
++int sys_open(const char* ufile) {
++  char* kfile = copy_in_string(ufile);
++  struct file_descriptor* fd;
++  int handle = -1;
++
++  fd = malloc(sizeof *fd);
++  if (fd != NULL) {
++    lock_acquire(&fs_lock);
++    fd->file = filesys_open(kfile);
++    if (fd->file != NULL) {
++      struct thread* cur = thread_current();
++      handle = fd->handle = cur->pcb->next_handle++;
++      list_push_front(&cur->pcb->fds, &fd->elem);
++    } else
++      free(fd);
++    lock_release(&fs_lock);
++  }
++
++  palloc_free_page(kfile);
++  return handle;
++}
++
++/* Returns the file descriptor associated with the given handle.
++   Terminates the process if HANDLE is not associated with an
++   open file. */
++static struct file_descriptor* lookup_fd(int handle) {
++  struct thread* cur = thread_current();
++  struct list_elem* e;
++
++  for (e = list_begin(&cur->pcb->fds); e != list_end(&cur->pcb->fds); e = list_next(e)) {
++    struct file_descriptor* fd;
++    fd = list_entry(e, struct file_descriptor, elem);
++    if (fd->handle == handle)
++      return fd;
+   }
++
++  process_exit();
++  NOT_REACHED();
++}
++
++/* Filesize system call. */
++int sys_filesize(int handle) {
++  struct file_descriptor* fd = lookup_fd(handle);
++  int size;
++
++  lock_acquire(&fs_lock);
++  size = file_length(fd->file);
++  lock_release(&fs_lock);
++
++  return size;
++}
++
++/* Read system call. */
++int sys_read(int handle, void* udst_, unsigned size) {
++  uint8_t* udst = udst_;
++  struct file_descriptor* fd;
++  int bytes_read = 0;
++
++  /* Handle keyboard reads. */
++  if (handle == STDIN_FILENO) {
++    for (bytes_read = 0; (size_t)bytes_read < size; bytes_read++)
++      if (udst >= (uint8_t*)PHYS_BASE || !put_user(udst++, input_getc()))
++        process_exit();
++    return bytes_read;
++  }
++
++  /* Handle all other reads. */
++  fd = lookup_fd(handle);
++  lock_acquire(&fs_lock);
++  while (size > 0) {
++    /* How much to read into this page? */
++    size_t page_left = PGSIZE - pg_ofs(udst);
++    size_t read_amt = size < page_left ? size : page_left;
++    off_t retval;
++
++    /* Check that touching this page is okay. */
++    if (!verify_user(udst)) {
++      lock_release(&fs_lock);
++      process_exit();
++    }
++
++    /* Read from file into page. */
++    retval = file_read(fd->file, udst, read_amt);
++    if (retval < 0) {
++      if (bytes_read == 0)
++        bytes_read = -1;
++      break;
++    }
++    bytes_read += retval;
++
++    /* If it was a short read we're done. */
++    if (retval != (off_t)read_amt)
++      break;
++
++    /* Advance. */
++    udst += retval;
++    size -= retval;
++  }
++  lock_release(&fs_lock);
++
++  return bytes_read;
+ }
++
++/* Write system call. */
++int sys_write(int handle, void* usrc_, unsigned size) {
++  uint8_t* usrc = usrc_;
++  struct file_descriptor* fd = NULL;
++  int bytes_written = 0;
++
++  /* Lookup up file descriptor. */
++  if (handle != STDOUT_FILENO)
++    fd = lookup_fd(handle);
++
++  lock_acquire(&fs_lock);
++  while (size > 0) {
++    /* How much bytes to write to this page? */
++    size_t page_left = PGSIZE - pg_ofs(usrc);
++    size_t write_amt = size < page_left ? size : page_left;
++    off_t retval;
++
++    /* Check that we can touch this user page. */
++    if (!verify_user(usrc)) {
++      lock_release(&fs_lock);
++      process_exit();
++    }
++
++    /* Do the write. */
++    if (handle == STDOUT_FILENO) {
++      putbuf(usrc, write_amt);
++      retval = write_amt;
++    } else
++      retval = file_write(fd->file, usrc, write_amt);
++    if (retval < 0) {
++      if (bytes_written == 0)
++        bytes_written = -1;
++      break;
++    }
++    bytes_written += retval;
++
++    /* If it was a short write we're done. */
++    if (retval != (off_t)write_amt)
++      break;
++
++    /* Advance. */
++    usrc += retval;
++    size -= retval;
++  }
++  lock_release(&fs_lock);
++
++  return bytes_written;
++}
++
++/* Seek system call. */
++int sys_seek(int handle, unsigned position) {
++  struct file_descriptor* fd = lookup_fd(handle);
++
++  lock_acquire(&fs_lock);
++  if ((off_t)position >= 0)
++    file_seek(fd->file, position);
++  lock_release(&fs_lock);
++
++  return 0;
++}
++
++/* Tell system call. */
++int sys_tell(int handle) {
++  struct file_descriptor* fd = lookup_fd(handle);
++  unsigned position;
++
++  lock_acquire(&fs_lock);
++  position = file_tell(fd->file);
++  lock_release(&fs_lock);
++
++  return position;
++}
++
++/* Close system call. */
++int sys_close(int handle) {
++  struct file_descriptor* fd = lookup_fd(handle);
++  safe_file_close(fd->file);
++  list_remove(&fd->elem);
++  free(fd);
++  return 0;
++}
++
++/* Practice system call. */
++int sys_practice(int input) { return input + 1; }
++
++/* Compute e and return a float cast to an int */
++int sys_compute_e(int n) { return sys_sum_to_e(n); }
+diff --git a/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.h b/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.h
+index 30d6207..ff059da 100644
+--- a/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.h
++++ b/pintos-solutions/cs162-skeleton/pintos/src/userprog/syscall.h
+@@ -1,6 +1,26 @@
+ #ifndef USERPROG_SYSCALL_H
+ #define USERPROG_SYSCALL_H
+ 
++#include "threads/thread.h"
++#include "userprog/process.h"
++
++int sys_halt(void);
++int sys_exit(int status);
++int sys_exec(const char* ufile);
++int sys_wait(pid_t child);
++int sys_create(const char* ufile, unsigned initial_size);
++int sys_remove(const char* ufile);
++int sys_open(const char* ufile);
++int sys_filesize(int handle);
++int sys_read(int handle, void* udst_, unsigned size);
++int sys_write(int handle, void* usrc_, unsigned size);
++int sys_seek(int handle, unsigned position);
++int sys_tell(int handle);
++int sys_close(int handle);
++int sys_practice(int input);
++int sys_compute_e(int n);
++
+ void syscall_init(void);
++void safe_file_close(struct file* file);
+ 
+ #endif /* userprog/syscall.h */
+
