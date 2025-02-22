@@ -1,4 +1,3 @@
-CS 162 Group Repository
-=======================
+# COMPSCI-162   
 
-This repository contains code for CS 162 group projects.
+## Status 278 / 281
