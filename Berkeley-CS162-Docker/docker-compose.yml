@@ -1,0 +1,9 @@
+version: "3.9"
+services:
+  cs162:
+    image: cs162/workspace:latest
+    tty: true
+    volumes:
+      - ./.workspace:/home/vagrant
+    ports:
+      - "16222:22"
